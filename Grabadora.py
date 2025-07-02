@@ -540,19 +540,22 @@ class GrabadorPartidas:
             if len(botones) >= 3:
                 self.driver.execute_script("arguments[0].click();", botones[2])
                 self.log("Grabación iniciada en navegador")
+            else:
+                self.log("Error: No se encontraron suficientes botones para iniciar la grabación")
         except Exception as e:
             self.log(f"Error al iniciar grabación: {str(e)}")
             
     def click_stop_record_button(self):
-        try:
-            stop_button = WebDriverWait(self.driver, 10).until(
+        try:     
+            stop_button = WebDriverWait(self.driver, 15).until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button.css-1wrjn5s"))
             )
             self.driver.execute_script("arguments[0].click();", stop_button)
             self.log("Grabación detenida en navegador")
         except Exception as e:
-            self.log(f"Error al detener grabación: {str(e)}")
-            
+            self.log(f"Error al detener grabación: {str(e)}. Intentando continuar...")
+
+
     def escuchar_datos(self):
         sock_datos = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock_datos.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -598,12 +601,16 @@ class GrabadorPartidas:
                 self.log(f"Error al guardar datos: {str(e)}")
                 
     def generar_nuevo_nombre(self):
-        carpeta = self.carpeta_videos_var.get()
-        os.makedirs(carpeta, exist_ok=True)
+        carpeta_videos = self.carpeta_videos_var.get()
+        carpeta_datos = self.carpeta_datos_var.get()
+        os.makedirs(carpeta_videos, exist_ok=True)
+        os.makedirs(carpeta_datos, exist_ok=True)
         i = 1
         while True:
             nombre = f"Partida_{i:03d}"
-            if not os.path.exists(os.path.join(carpeta, nombre + ".mp4")):
+            video_path = os.path.join(carpeta_videos, nombre + ".mp4")
+            datos_path = os.path.join(carpeta_datos, nombre + ".jsonl")
+            if not os.path.exists(video_path) and not os.path.exists(datos_path):
                 return nombre
             i += 1
             
