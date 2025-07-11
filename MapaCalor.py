@@ -6,27 +6,24 @@ import os
 from datetime import datetime
 from tqdm import tqdm
 
-class ProfessionalGazeHeatmapGenerator:
+class HeatmapGenerator:
     def __init__(self, video_path, jsonl_path, output_path, parent_app):
         self.video_path = video_path
         self.jsonl_path = jsonl_path
         self.output_path = output_path
         self.parent_app = parent_app
 
-        # Main parameters
         self.intensity_radius = 25
         self.blur_sigma = 25
         self.alpha_heatmap = 0.6
         self.alpha_video = 0.4
         self.temporal_window = 0.5
         
-        # Enhanced visualization parameters
         self.min_intensity = 0.1
         self.max_intensity = 1.0
         self.fade_zones = True
         self.fade_strength = 0.4
         
-        # Professional features
         self.show_statistics = True
         self.show_fixation_points = True
         self.show_gaze_trail = True
@@ -36,7 +33,6 @@ class ProfessionalGazeHeatmapGenerator:
         self.adaptive_intensity = True
         self.quality_preset = "high"
         
-        # Quality settings
         self.quality_settings = {
             "high": {"codec": "mp4v", "bitrate": None}
         }
@@ -262,7 +258,7 @@ class ProfessionalGazeHeatmapGenerator:
         total = len(self.gaze_data)
         recent_points = []
 
-        self.parent_app.log("Generando heatmap dinámico profesional...")
+        self.parent_app.log("Generando heatmap dinámico...")
         start_time = time.time()
         
         for frame_idx in tqdm(range(self.total_frames), desc="Procesando frames", file=open(os.devnull, 'w')):
@@ -358,21 +354,21 @@ class ProfessionalGazeHeatmapGenerator:
             f.write(f"Radio de intensidad: {self.intensity_radius}px\n")
             f.write(f"Sigma de desenfoque: {self.blur_sigma}\n")
             f.write(f"Ventana temporal: {self.temporal_window}s\n")
-            f.write(f"Intensidad del heatmap: {self.alpha_heatmap}\n")
-            f.write(f"Aclarado de zonas no miradas: {self.fade_strength}\n")
+            f.write(f"Opacidad del heatmap: {self.alpha_heatmap}\n")
+            f.write(f"Intensidad de aclarado: {self.fade_strength}\n")
         
         self.parent_app.log(f"Reporte generado: {report_path}")
 
     def run(self):
         try:
-            self.parent_app.log("=== GENERADOR PROFESIONAL DE HEATMAP DE MIRADA ===")
+            self.parent_app.log("=== Generador de Heatmap de Mirada ===")
             self.load_video_info()
             self.process_gaze_data()
             self.generate_heatmap()
             self.generate_summary_report()
             return True
         except Exception as e:
-            self.parent_app.log(f"ERROR: {e}", nivel="ERROR")
+            self.parent_app.log(f"Error en la generación del heatmap: {str(e)}", level="ERROR")
             if self.cap:
                 self.cap.release()
             return False

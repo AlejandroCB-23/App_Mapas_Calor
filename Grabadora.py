@@ -16,43 +16,40 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.edge.options import Options
 from datetime import datetime
-from MapaCalor import ProfessionalGazeHeatmapGenerator
+from MapaCalor import HeatmapGenerator
 
-class GrabadorPartidas:
+class GameRecorder:
     def __init__(self, root):
         self.root = root
         self.root.title("Grabador de Partidas - Mapa de Calor")
         self.root.geometry("1000x750")
         
-        # Configuration variables
         self.url_var = ctk.StringVar(value="http://192.168.1.20:8080/cast")
-        self.carpeta_videos_var = ctk.StringVar(value="C:\\Users\\alexc\\OneDrive\\Escritorio\\MyApp\\AppMapaCalor\\Videos")
-        self.carpeta_datos_var = ctk.StringVar(value="C:\\Users\\alexc\\OneDrive\\Escritorio\\MyApp\\AppMapaCalor\\Datos")
-        self.carpeta_vergence_var = ctk.StringVar(value="C:\\Users\\alexc\\OneDrive\\Escritorio\\MyApp\\AppMapaCalor\\Vergence")
-        self.carpeta_descargas_var = ctk.StringVar(value="C:\\Users\\alexc\\Downloads")
-        self.carpeta_heatmap_var = ctk.StringVar(value="C:\\Users\\alexc\\OneDrive\\Escritorio\\MyApp\\AppMapaCalor\\HeatMap")
+        self.videos_folder_var = ctk.StringVar(value="Elige la carpeta")
+        self.data_folder_var = ctk.StringVar(value="Elige la carpeta")
+        self.vergence_folder_var = ctk.StringVar(value="Elige la carpeta")
+        self.downloads_folder_var = ctk.StringVar(value="Elige la carpeta")
+        self.heatmap_folder_var = ctk.StringVar(value="Elige la carpeta")
         self.driver_path_var = ctk.StringVar(value="WebDriver/msedgedriver.exe")
         
-        # State variables
         self.driver = None
-        self.sock_video = None
-        self.sock_vergence = None
-        self.esperando_grabacion = False
-        self.grabando = False
+        self.video_sock = None
+        self.vergence_sock = None
+        self.waiting_for_recording = False
+        self.recording = False
         self.listening_vergence = False
-        self.partida_actual = None
-        self.datos_partida = []
+        self.current_game = None
+        self.game_data = []
         self.vergence_data = []
-        self.hilo_datos = None
-        self.hilo_udp = None
-        self.hilo_vergence = None
-        self.detener_escucha = threading.Event()
-        self.detener_udp = threading.Event()
-        self.detener_vergence = threading.Event()
-        self.cola_videos = queue.Queue()
+        self.data_thread = None
+        self.udp_thread = None
+        self.vergence_thread = None
+        self.stop_listening = threading.Event()
+        self.stop_udp = threading.Event()
+        self.stop_vergence = threading.Event()
+        self.video_queue = queue.Queue()
         self.current_tab = "Grabadora"
         
-        # Heatmap variables
         self.heatmap_video_var = ctk.StringVar()
         self.heatmap_jsonl_var = ctk.StringVar()
         self.heatmap_intensity_radius_var = ctk.StringVar(value="25")
@@ -70,18 +67,17 @@ class GrabadorPartidas:
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         
-        self.crear_interfaz()
-        self.iniciar_procesador_videos()
+        self.create_interface()
+        self.start_video_processor()
         
         self.switch_tab("Grabadora")
         
-    def crear_interfaz(self):
+    def create_interface(self):
         self.main_frame = ctk.CTkFrame(self.root, fg_color="#1a1a1a")
         self.main_frame.pack(fill="both", expand=True)
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(1, weight=1)
         
-        # Sidebar container
         self.sidebar_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.sidebar_container.grid(row=0, column=1, rowspan=2, sticky="ns", padx=(5, 15), pady=(15, 15))
         self.sidebar_container.grid_columnconfigure(0, weight=1)
@@ -89,7 +85,6 @@ class GrabadorPartidas:
         self.sidebar_container.grid_rowconfigure(1, weight=0)
         self.sidebar_container.grid_rowconfigure(2, weight=1)
         
-        # Intermediate frame to center sidebar vertically
         self.sidebar_centering_frame = ctk.CTkFrame(self.sidebar_container, fg_color="transparent")
         self.sidebar_centering_frame.grid(row=1, column=0, sticky="nsew")
         self.sidebar_centering_frame.grid_columnconfigure(0, weight=1)
@@ -98,7 +93,6 @@ class GrabadorPartidas:
         self.sidebar = ctk.CTkFrame(self.sidebar_centering_frame, fg_color="#212121", corner_radius=12, border_width=2, border_color="#424242", width=250)
         self.sidebar.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
         
-        # Configure sidebar rows
         self.sidebar.grid_columnconfigure(0, weight=1)
         self.sidebar.grid_rowconfigure(0, weight=1)
         self.sidebar.grid_rowconfigure(1, weight=2)
@@ -108,7 +102,6 @@ class GrabadorPartidas:
         self.sidebar.grid_rowconfigure(5, weight=2)
         self.sidebar.grid_rowconfigure(6, weight=1)
         
-        # Sidebar title frame
         self.sidebar_title_frame = ctk.CTkFrame(
             self.sidebar,
             fg_color="#2e2e2e",
@@ -127,10 +120,16 @@ class GrabadorPartidas:
         self.sidebar_title.pack(pady=10, padx=10, fill="x")
         
         self.sidebar_buttons = {}
+        icons = {
+            "Grabadora": "🎥",
+            "Heatmap": "🔥",
+            "Configuración": "⚙️",
+            "Logs": "📜"
+        }
         for i, tab_name in enumerate(["Grabadora", "Heatmap", "Configuración", "Logs"], 1):
             btn = ctk.CTkButton(
                 self.sidebar,
-                text=tab_name,
+                text=f"{icons[tab_name]} {tab_name}",
                 command=lambda t=tab_name: self.switch_tab(t),
                 fg_color="#0288d1",
                 hover_color="#0277bd",
@@ -138,7 +137,8 @@ class GrabadorPartidas:
                 corner_radius=10,
                 height=45,
                 border_width=2,
-                border_color="#424242"
+                border_color="#424242",
+                anchor="w"
             )
             btn.grid(row=i, column=0, padx=15, pady=20, sticky="ew")
             self.sidebar_buttons[tab_name] = btn
@@ -175,10 +175,10 @@ class GrabadorPartidas:
         self.tab_frame.grid_rowconfigure(0, weight=1)
         
         self.tab_contents = {}
-        self.crear_pestaña_control()
-        self.crear_pestaña_heatmap()
-        self.crear_pestaña_configuracion()
-        self.crear_pestaña_logs()
+        self.create_recorder_tab()
+        self.create_heatmap_tab()
+        self.create_settings_tab()
+        self.create_logs_tab()
         
     def toggle_appearance_mode(self):
         new_mode = "light" if ctk.get_appearance_mode() == "Dark" else "dark"
@@ -232,7 +232,7 @@ class GrabadorPartidas:
                     widget.configure(fg_color=mode_colors["sidebar_title_bg"], border_color=mode_colors["border"])
                 elif widget in [self.control_frame, self.tab_contents["Heatmap"], self.tab_contents["Configuración"], self.tab_contents["Logs"]]:
                     widget.configure(fg_color=mode_colors["control_fg"], border_color=mode_colors["border"], border_width=2)
-                elif widget in [self.buttons_frame, self.vergence_frame]:
+                elif widget in [self.buttons_frame]:
                     widget.configure(fg_color=mode_colors["control_fg"], border_color=mode_colors["border"], border_width=0)
                 elif widget == self.stats_frame:
                     widget.configure(fg_color=mode_colors["stats_fg"], border_color=mode_colors["stats_border"], border_width=3)
@@ -246,12 +246,27 @@ class GrabadorPartidas:
                 else:
                     widget.configure(text_color=mode_colors["text"])
             elif isinstance(widget, ctk.CTkButton):
-                widget.configure(
-                    fg_color=mode_colors["stop_button"] if widget in [self.btn_detener_forzado, self.btn_toggle_vergence] else mode_colors["accent"],
-                    hover_color=mode_colors["stop_button_hover"] if widget in [self.btn_detener_forzado, self.btn_toggle_vergence] else mode_colors["accent"],
-                    border_color=mode_colors["border"],
-                    border_width=3
-                )
+                if widget == self.btn_force_stop:
+                    widget.configure(
+                        fg_color=mode_colors["stop_button"],
+                        hover_color=mode_colors["stop_button_hover"],
+                        border_color=mode_colors["border"],
+                        border_width=3
+                    )
+                elif widget == self.btn_toggle_vergence:
+                    widget.configure(
+                        fg_color=mode_colors["stop_button"] if self.listening_vergence else mode_colors["accent"],
+                        hover_color=mode_colors["stop_button_hover"] if self.listening_vergence else mode_colors["accent"],
+                        border_color=mode_colors["border"],
+                        border_width=3
+                    )
+                else:
+                    widget.configure(
+                        fg_color=mode_colors["accent"],
+                        hover_color=mode_colors["accent"],
+                        border_color=mode_colors["border"],
+                        border_width=3
+                    )
             elif isinstance(widget, ctk.CTkEntry):
                 widget.configure(fg_color=mode_colors["entry_fg"], border_color=mode_colors["accent"], text_color=mode_colors["text"])
             elif isinstance(widget, ctk.CTkTextbox):
@@ -288,15 +303,15 @@ class GrabadorPartidas:
         self.tab_contents[tab_name].grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.main_title.configure(text=tab_name)
         
-    def crear_pestaña_control(self):
+    def create_recorder_tab(self):
         self.control_frame = ctk.CTkFrame(self.tab_frame, fg_color="#212121", border_width=2, border_color="#424242")
         self.control_frame.grid_columnconfigure(0, weight=1)
         self.tab_contents["Grabadora"] = self.control_frame
-        
+
         self.status_frame = ctk.CTkFrame(self.control_frame, fg_color="#2e2e2e", corner_radius=12, border_width=3, border_color="#424242")
         self.status_frame.grid(row=0, column=0, sticky="ew", padx=40, pady=25)
         self.status_frame.grid_columnconfigure(0, weight=1)
-        
+
         self.status_label = ctk.CTkLabel(
             self.status_frame,
             text="Listo para comenzar",
@@ -304,15 +319,15 @@ class GrabadorPartidas:
             text_color="#ffffff"
         )
         self.status_label.grid(row=0, column=0, pady=15)
-        
-        self.partida_label = ctk.CTkLabel(
+
+        self.game_label = ctk.CTkLabel(
             self.status_frame,
             text="Sin partida activa",
             font=("Helvetica", 16),
             text_color="#e0e0e0"
         )
-        self.partida_label.grid(row=1, column=0, pady=5)
-        
+        self.game_label.grid(row=1, column=0, pady=5)
+
         self.progress_bar = ctk.CTkProgressBar(
             self.status_frame,
             mode="indeterminate",
@@ -323,17 +338,17 @@ class GrabadorPartidas:
         self.progress_bar.grid(row=2, column=0, pady=15, padx=30, sticky="ew")
         self.progress_bar.set(0)
         self.progress_bar.stop()
-        
+
         self.buttons_frame = ctk.CTkFrame(self.control_frame, fg_color="#212121")
         self.buttons_frame.grid(row=1, column=0, pady=25, padx=10)
         self.buttons_frame.grid_columnconfigure(0, weight=1)
         self.buttons_frame.grid_columnconfigure(1, weight=1)
         self.buttons_frame.grid_columnconfigure(2, weight=1)
-        
-        self.btn_comenzar = ctk.CTkButton(
+
+        self.btn_start = ctk.CTkButton(
             self.buttons_frame,
-            text="Comenzar Partida",
-            command=self.comenzar_partida,
+            text="Comenzar",
+            command=self.start_game,
             fg_color="#0288d1",
             hover_color="#01579b",
             font=("Helvetica", 18, "bold"),
@@ -342,12 +357,26 @@ class GrabadorPartidas:
             border_width=3,
             border_color="#424242"
         )
-        self.btn_comenzar.grid(row=0, column=0, padx=20, sticky="e")
-        
-        self.btn_detener_forzado = ctk.CTkButton(
+        self.btn_start.grid(row=0, column=0, padx=10, sticky="e")
+
+        self.btn_toggle_vergence = ctk.CTkButton(
             self.buttons_frame,
-            text="Detener Forzado",
-            command=self.detener_forzado,
+            text="Datos Vergencia",
+            command=self.toggle_vergence_listening,
+            fg_color="#0288d1",
+            hover_color="#01579b",
+            font=("Helvetica", 18, "bold"),
+            corner_radius=15,
+            height=60,
+            border_width=3,
+            border_color="#424242"
+        )
+        self.btn_toggle_vergence.grid(row=0, column=1, padx=10, sticky="w")
+
+        self.btn_force_stop = ctk.CTkButton(
+            self.buttons_frame,
+            text="Forzar Detención",
+            command=self.force_stop,
             state="disabled",
             fg_color="#d32f2f",
             hover_color="#b71c1c",
@@ -357,51 +386,17 @@ class GrabadorPartidas:
             border_width=3,
             border_color="#424242"
         )
-        self.btn_detener_forzado.grid(row=0, column=1, padx=20, sticky="w")
-        
-        self.btn_toggle_vergence = ctk.CTkButton(
-            self.buttons_frame,
-            text="Iniciar Escucha Vergence",
-            command=self.toggle_vergence_listening,
-            fg_color="#d32f2f",
-            hover_color="#b71c1c",
-            font=("Helvetica", 18, "bold"),
-            corner_radius=15,
-            height=60,
-            border_width=3,
-            border_color="#424242"
-        )
-        self.btn_toggle_vergence.grid(row=0, column=2, padx=20, sticky="w")
-        
-        self.vergence_frame = ctk.CTkFrame(self.control_frame, fg_color="#212121")
-        self.vergence_frame.grid(row=2, column=0, pady=10, padx=10)
-        self.vergence_frame.grid_columnconfigure(0, weight=1)
-        
-        self.vergence_status_label = ctk.CTkLabel(
-            self.vergence_frame,
-            text="Escucha Vergence: Apagada",
-            font=("Helvetica", 16),
-            text_color="#e0e0e0"
-        )
-        self.vergence_status_label.grid(row=0, column=0, pady=5)
-        
-        self.vergence_count_label = ctk.CTkLabel(
-            self.vergence_frame,
-            text="Datos Vergence: 0",
-            font=("Helvetica", 16),
-            text_color="#e0e0e0"
-        )
-        self.vergence_count_label.grid(row=1, column=0, pady=5)
-        
+        self.btn_force_stop.grid(row=0, column=2, padx=10, sticky="w")
+
         self.info_frame = ctk.CTkFrame(self.control_frame, fg_color="#2e2e2e", corner_radius=12, border_width=3, border_color="#424242")
-        self.info_frame.grid(row=3, column=0, sticky="nsew", padx=40, pady=25)
+        self.info_frame.grid(row=2, column=0, sticky="nsew", padx=40, pady=25)
         self.info_frame.grid_columnconfigure(0, weight=1)
-        
+
         self.stats_frame = ctk.CTkFrame(self.info_frame, fg_color="#2e2e2e", corner_radius=12, border_width=3, border_color="#0288d1")
         self.stats_frame.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
         self.stats_frame.grid_columnconfigure(0, weight=0)
         self.stats_frame.grid_columnconfigure(1, weight=1)
-        
+
         ctk.CTkLabel(
             self.stats_frame,
             text="📊 Datos recibidos:",
@@ -410,16 +405,16 @@ class GrabadorPartidas:
             width=200,
             anchor="w"
         ).grid(row=0, column=0, sticky="w", padx=(10, 5), pady=5)
-        
-        self.datos_count_label = ctk.CTkLabel(
+
+        self.data_count_label = ctk.CTkLabel(
             self.stats_frame,
             text="0",
             font=("Helvetica", 16),
             text_color="#e0e0e0",
             anchor="w"
         )
-        self.datos_count_label.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        
+        self.data_count_label.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+
         ctk.CTkLabel(
             self.stats_frame,
             text="⏱ Tiempo de grabación:",
@@ -428,23 +423,59 @@ class GrabadorPartidas:
             width=200,
             anchor="w"
         ).grid(row=1, column=0, sticky="w", padx=(10, 5), pady=5)
-        
-        self.tiempo_label = ctk.CTkLabel(
+
+        self.time_label = ctk.CTkLabel(
             self.stats_frame,
             text="00:00:00",
             font=("Helvetica", 16),
             text_color="#e0e0e0",
             anchor="w"
         )
-        self.tiempo_label.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        self.time_label.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+
+        ctk.CTkLabel(
+            self.stats_frame,
+            text="🔍 Estado Vergencia:",
+            font=("Helvetica", 16),
+            text_color="#e0e0e0",
+            width=200,
+            anchor="w"
+        ).grid(row=2, column=0, sticky="w", padx=(10, 5), pady=5)
+
+        self.vergence_status_label = ctk.CTkLabel(
+            self.stats_frame,
+            text="Apagada",
+            font=("Helvetica", 16),
+            text_color="#e0e0e0",
+            anchor="w"
+        )
+        self.vergence_status_label.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+
+        ctk.CTkLabel(
+            self.stats_frame,
+            text="📈 Datos de Vergencia:",
+            font=("Helvetica", 16),
+            text_color="#e0e0e0",
+            width=200,
+            anchor="w"
+        ).grid(row=3, column=0, sticky="w", padx=(10, 5), pady=5)
+
+        self.vergence_count_label = ctk.CTkLabel(
+            self.stats_frame,
+            text="0",
+            font=("Helvetica", 16),
+            text_color="#e0e0e0",
+            anchor="w"
+        )
+        self.vergence_count_label.grid(row=3, column=1, sticky="w", padx=5, pady=5)
+
+    def create_settings_tab(self):
+        settings_frame = ctk.CTkFrame(self.tab_frame, fg_color="#212121", border_width=2, border_color="#424242")
+        settings_frame.grid_columnconfigure(0, weight=1)
+        settings_frame.grid_rowconfigure(0, weight=1)
+        self.tab_contents["Configuración"] = settings_frame
         
-    def crear_pestaña_configuracion(self):
-        config_frame = ctk.CTkFrame(self.tab_frame, fg_color="#212121", border_width=2, border_color="#424242")
-        config_frame.grid_columnconfigure(0, weight=1)
-        config_frame.grid_rowconfigure(0, weight=1)
-        self.tab_contents["Configuración"] = config_frame
-        
-        scrollable_frame = ctk.CTkScrollableFrame(config_frame, fg_color="#212121", corner_radius=12)
+        scrollable_frame = ctk.CTkScrollableFrame(settings_frame, fg_color="#212121", corner_radius=12)
         scrollable_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         scrollable_frame.grid_columnconfigure(0, weight=1)
         
@@ -493,7 +524,7 @@ class GrabadorPartidas:
         ctk.CTkButton(
             driver_frame,
             text="Seleccionar",
-            command=lambda: self.seleccionar_archivo(self.driver_path_var),
+            command=lambda: self.select_file(self.driver_path_var),
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -508,11 +539,11 @@ class GrabadorPartidas:
         folders_frame.grid(row=1, column=0, sticky="ew", padx=40, pady=20)
         folders_frame.grid_columnconfigure(1, weight=1)
         
-        self.crear_selector_carpeta(folders_frame, "Carpeta de Videos:", self.carpeta_videos_var, 0)
-        self.crear_selector_carpeta(folders_frame, "Carpeta de Datos:", self.carpeta_datos_var, 2)
-        self.crear_selector_carpeta(folders_frame, "Carpeta de Datos Vergence:", self.carpeta_vergence_var, 4)
-        self.crear_selector_carpeta(folders_frame, "Carpeta de Descargas:", self.carpeta_descargas_var, 6)
-        self.crear_selector_carpeta(folders_frame, "Carpeta de Heatmaps:", self.carpeta_heatmap_var, 8)
+        self.create_folder_selector(folders_frame, "Carpeta de Videos:", self.videos_folder_var, 0)
+        self.create_folder_selector(folders_frame, "Carpeta de Datos:", self.data_folder_var, 2)
+        self.create_folder_selector(folders_frame, "Carpeta de Datos Vergencia:", self.vergence_folder_var, 4)
+        self.create_folder_selector(folders_frame, "Carpeta de Descargas:", self.downloads_folder_var, 6)
+        self.create_folder_selector(folders_frame, "Carpeta de Heatmaps:", self.heatmap_folder_var, 8)
         
         network_frame = ctk.CTkFrame(scrollable_frame, fg_color="#2e2e2e", corner_radius=12, border_width=2, border_color="#424242")
         network_frame.grid(row=2, column=0, sticky="ew", padx=40, pady=20)
@@ -542,7 +573,7 @@ class GrabadorPartidas:
         ctk.CTkButton(
             scrollable_frame,
             text="Guardar Configuración",
-            command=self.guardar_configuracion,
+            command=self.save_settings,
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -552,7 +583,7 @@ class GrabadorPartidas:
             border_color="#424242"
         ).grid(row=3, column=0, pady=25, sticky="ew", padx=40)
         
-    def crear_pestaña_heatmap(self):
+    def create_heatmap_tab(self):
         heatmap_frame = ctk.CTkFrame(self.tab_frame, fg_color="#212121", border_width=2, border_color="#424242")
         heatmap_frame.grid_columnconfigure(0, weight=1)
         heatmap_frame.grid_rowconfigure(0, weight=1)
@@ -566,8 +597,8 @@ class GrabadorPartidas:
         files_frame.grid(row=0, column=0, sticky="ew", padx=40, pady=20)
         files_frame.grid_columnconfigure(1, weight=1)
         
-        self.crear_selector_archivo(files_frame, "Video de Entrada (.mp4):", self.heatmap_video_var, self.carpeta_videos_var, ".mp4", 0)
-        self.crear_selector_archivo(files_frame, "Datos de Mirada (.jsonl):", self.heatmap_jsonl_var, self.carpeta_datos_var, ".jsonl", 2)
+        self.create_file_selector(files_frame, "Video de Entrada (.mp4):", self.heatmap_video_var, self.videos_folder_var, ".mp4", 0)
+        self.create_file_selector(files_frame, "Datos de Mirada (.jsonl):", self.heatmap_jsonl_var, self.data_folder_var, ".jsonl", 2)
         
         params_frame = ctk.CTkFrame(scrollable_frame, fg_color="#2e2e2e", corner_radius=12, border_width=2, border_color="#424242")
         params_frame.grid(row=1, column=0, sticky="ew", padx=40, pady=20)
@@ -638,12 +669,12 @@ class GrabadorPartidas:
         output_frame.grid(row=3, column=0, sticky="ew", padx=40, pady=20)
         output_frame.grid_columnconfigure(1, weight=1)
         
-        self.crear_selector_carpeta(output_frame, "Carpeta de Salida:", self.carpeta_heatmap_var, 0)
+        self.create_folder_selector(output_frame, "Carpeta de Salida:", self.heatmap_folder_var, 0)
         
         ctk.CTkButton(
             scrollable_frame,
             text="Generar Heatmap",
-            command=self.generar_heatmap,
+            command=self.generate_heatmap,
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -653,7 +684,7 @@ class GrabadorPartidas:
             border_color="#424242"
         ).grid(row=4, column=0, pady=25, sticky="ew", padx=40)
         
-    def crear_pestaña_logs(self):
+    def create_logs_tab(self):
         logs_frame = ctk.CTkFrame(self.tab_frame, fg_color="#212121", border_width=2, border_color="#424242")
         logs_frame.grid_columnconfigure(0, weight=1)
         logs_frame.grid_rowconfigure(0, weight=1)
@@ -674,7 +705,7 @@ class GrabadorPartidas:
         ctk.CTkButton(
             logs_frame,
             text="Limpiar Logs",
-            command=self.limpiar_logs,
+            command=self.clear_logs,
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -684,10 +715,10 @@ class GrabadorPartidas:
             border_color="#424242"
         ).grid(row=1, column=0, pady=15)
         
-    def crear_selector_carpeta(self, parent, texto, variable, row):
+    def create_folder_selector(self, parent, text, variable, row):
         ctk.CTkLabel(
             parent,
-            text=texto,
+            text=text,
             font=("Helvetica", 16),
             text_color="#e0e0e0"
         ).grid(row=row, column=0, sticky="w", padx=25, pady=10)
@@ -709,7 +740,7 @@ class GrabadorPartidas:
         ctk.CTkButton(
             folder_frame,
             text="Seleccionar",
-            command=lambda: self.seleccionar_carpeta(variable),
+            command=lambda: self.select_folder(variable),
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -720,10 +751,10 @@ class GrabadorPartidas:
             border_color="#424242"
         ).grid(row=0, column=1, padx=15)
         
-    def crear_selector_archivo(self, parent, texto, variable, default_dir, extension, row):
+    def create_file_selector(self, parent, text, variable, default_dir, extension, row):
         ctk.CTkLabel(
             parent,
-            text=texto,
+            text=text,
             font=("Helvetica", 16),
             text_color="#e0e0e0"
         ).grid(row=row, column=0, sticky="w", padx=25, pady=10)
@@ -745,7 +776,7 @@ class GrabadorPartidas:
         ctk.CTkButton(
             file_frame,
             text="Seleccionar",
-            command=lambda: self.seleccionar_archivo(variable, default_dir, extension),
+            command=lambda: self.select_file(variable, default_dir, extension),
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -756,31 +787,32 @@ class GrabadorPartidas:
             border_color="#424242"
         ).grid(row=0, column=1, padx=15)
         
-    def seleccionar_carpeta(self, variable):
-        carpeta = filedialog.askdirectory(initialdir=variable.get())
-        if carpeta:
-            variable.set(carpeta)
+    def select_folder(self, variable):
+        folder = filedialog.askdirectory(initialdir=variable.get() if variable.get() != "Elige la carpeta" else "")
+        if folder:
+            variable.set(folder)
             
-    def seleccionar_archivo(self, variable, default_dir=None, extension=None):
-        archivo = filedialog.askopenfilename(
-            initialdir=default_dir.get() if default_dir else variable.get(),
+    def select_file(self, variable, default_dir=None, extension=None):
+        initial_dir = default_dir.get() if default_dir.get() != "Elige la carpeta" else ""
+        file = filedialog.askopenfilename(
+            initialdir=initial_dir,
             filetypes=[(f"Archivos {extension}", f"*{extension}"), ("Todos los archivos", "*.*")] if extension else [("Todos los archivos", "*.*")]
         )
-        if archivo:
-            variable.set(archivo)
+        if file:
+            variable.set(file)
     
-    def log(self, mensaje, nivel="INFO"):
+    def log(self, message, level="INFO"):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        log_msg = f"[{timestamp}] {nivel}: {mensaje}\n"
+        log_msg = f"[{timestamp}] {level}: {message}\n"
         self.log_text.insert("end", log_msg)
         self.log_text.see("end")
-        print(f"{nivel}: {mensaje}")
+        print(f"{level}: {message}")
         
-    def limpiar_logs(self):
+    def clear_logs(self):
         self.log_text.delete("0.0", "end")
         
-    def generar_heatmap(self):
-        def proceso_heatmap():
+    def generate_heatmap(self):
+        def heatmap_process():
             try:
                 video_path = self.heatmap_video_var.get()
                 jsonl_path = self.heatmap_jsonl_var.get()
@@ -788,10 +820,14 @@ class GrabadorPartidas:
                     self.root.after(0, lambda: messagebox.showerror("Error", "Selecciona un video y un archivo de datos"))
                     return
                 
-                partida_name = os.path.splitext(os.path.basename(video_path))[0]
-                output_path = os.path.join(self.carpeta_heatmap_var.get(), f"{partida_name}_heatmap.mp4")
+                if self.heatmap_folder_var.get() == "Elige la carpeta":
+                    self.root.after(0, lambda: messagebox.showerror("Error", "Selecciona una carpeta de salida para el heatmap"))
+                    return
                 
-                generator = ProfessionalGazeHeatmapGenerator(video_path, jsonl_path, output_path, self)
+                game_name = os.path.splitext(os.path.basename(video_path))[0]
+                output_path = os.path.join(self.heatmap_folder_var.get(), f"{game_name}_heatmap.mp4")
+                
+                generator = HeatmapGenerator(video_path, jsonl_path, output_path, self)
                 
                 try:
                     generator.intensity_radius = int(self.heatmap_intensity_radius_var.get())
@@ -810,19 +846,19 @@ class GrabadorPartidas:
                 generator.color_intensity_scale = self.heatmap_color_intensity_scale_var.get()
                 generator.adaptive_intensity = self.heatmap_adaptive_intensity_var.get()
                 
-                self.root.after(0, lambda: self.actualizar_estado("Generando heatmap..."))
+                self.root.after(0, lambda: self.update_status("Generando heatmap..."))
                 success = generator.run()
                 if success:
-                    self.root.after(0, lambda: self.actualizar_estado("Heatmap generado exitosamente"))
+                    self.root.after(0, lambda: self.update_status("Heatmap generado exitosamente"))
                     self.root.after(0, lambda: messagebox.showinfo("Éxito", f"Heatmap generado en: {output_path}"))
                 else:
-                    self.root.after(0, lambda: self.actualizar_estado("Error al generar heatmap"))
+                    self.root.after(0, lambda: self.update_status("Error al generar heatmap"))
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"ERROR: Error al generar heatmap: {str(e)}", nivel="ERROR"))
+                self.root.after(0, lambda: self.log(f"Error al generar heatmap: {str(e)}", level="ERROR"))
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Error al generar heatmap: {str(e)}"))
-                self.root.after(0, lambda: self.actualizar_estado("Error al generar heatmap"))
+                self.root.after(0, lambda: self.update_status("Error al generar heatmap"))
         
-        threading.Thread(target=proceso_heatmap, daemon=True).start()
+        threading.Thread(target=heatmap_process, daemon=True).start()
         
     def toggle_vergence_listening(self):
         if not self.listening_vergence:
@@ -832,96 +868,103 @@ class GrabadorPartidas:
             
     def start_vergence_listening(self):
         try:
-            self.sock_vergence = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock_vergence.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock_vergence.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # Aumentado a 256 KB
-            self.sock_vergence.bind(("0.0.0.0", 5007))
-            self.sock_vergence.settimeout(1.0)
+            if self.vergence_folder_var.get() == "Elige la carpeta":
+                self.root.after(0, lambda: messagebox.showerror("Error", "Selecciona una carpeta para los datos de vergence"))
+                return
+                
+            self.vergence_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.vergence_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.vergence_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # Increased to 256 KB
+            self.vergence_sock.bind(("0.0.0.0", 5007))
+            self.vergence_sock.settimeout(1.0)
             
-            self.detener_vergence.clear()
+            self.stop_vergence.clear()
             self.listening_vergence = True
             self.vergence_data.clear()
-            self.hilo_vergence = threading.Thread(target=self.escuchar_vergence, daemon=True)
-            self.hilo_vergence.start()
+            self.vergence_thread = threading.Thread(target=self.listen_vergence, daemon=True)
+            self.vergence_thread.start()
             
-            self.btn_toggle_vergence.configure(text="Detener Escucha Vergence", fg_color="#0288d1", hover_color="#01579b")
-            self.vergence_status_label.configure(text="Escucha Vergence: Encendida")
-            self.log("INFO: Escucha de datos de vergence iniciada en el puerto 5007")
+            self.btn_toggle_vergence.configure(text="Detener Escucha Vergencia", fg_color="#d32f2f", hover_color="#b71c1c")
+            self.vergence_status_label.configure(text="Encendida")
+            self.log("Escucha de datos de vergence iniciada en el puerto 5007")
         except Exception as e:
-            self.log(f"ERROR: No se pudo iniciar la escucha de vergence: {str(e)}", nivel="ERROR")
+            self.log(f"No se pudo iniciar la escucha de vergence: {str(e)}", level="ERROR")
             self.root.after(0, lambda: messagebox.showerror("Error", f"No se pudo iniciar la escucha de vergence: {str(e)}"))
             
     def stop_vergence_listening(self):
-        self.detener_vergence.set()
-        if self.hilo_vergence and self.hilo_vergence.is_alive():
-            self.hilo_vergence.join(timeout=2)
-        if self.sock_vergence:
+        self.stop_vergence.set()
+        if self.vergence_thread and self.vergence_thread.is_alive():
+            self.vergence_thread.join(timeout=2)
+        if self.vergence_sock:
             try:
-                self.sock_vergence.close()
+                self.vergence_sock.close()
             except:
                 pass
-            self.sock_vergence = None
+            self.vergence_sock = None
         self.listening_vergence = False
-        self.btn_toggle_vergence.configure(text="Iniciar Escucha Vergence", fg_color="#d32f2f", hover_color="#b71c1c")
-        self.vergence_status_label.configure(text="Escucha Vergence: Apagada")
-        self.log("INFO: Escucha de datos de vergence detenida")
-        if self.vergence_data and self.partida_actual:
-            self.guardar_datos_vergence()
+        self.btn_toggle_vergence.configure(text="Datos Vergencia", fg_color="#0288d1", hover_color="#01579b")
+        self.vergence_status_label.configure(text="Apagada")
+        self.log("Escucha de datos de vergence detenida")
+        if self.vergence_data and self.current_game:
+            self.save_vergence_data()
             
-    def escuchar_vergence(self):
-        while not self.detener_vergence.is_set():
+    def listen_vergence(self):
+        while not self.stop_vergence.is_set():
             try:
-                data, addr = self.sock_vergence.recvfrom(262144)  # Aumentado a 256 KB
+                data, addr = self.vergence_sock.recvfrom(262144)  # Increased to 256 KB
                 try:
-                    mensaje = data.decode('utf-8').strip()
-                    # Validar que el mensaje es un JSON válido
-                    json.loads(mensaje)
-                    self.vergence_data.append(mensaje)
+                    message = data.decode('utf-8').strip()
+                    # Validate that the message is valid JSON
+                    json.loads(message)
+                    self.vergence_data.append(message)
                     
                     count = len(self.vergence_data)
-                    self.root.after(0, lambda: self.vergence_count_label.configure(text=f"Datos Vergence: {count}"))
-                    self.log(f"INFO: Dato de vergence recibido, tamaño: {len(data)} bytes, contenido: {mensaje[:50]}...")
+                    self.root.after(0, lambda: self.vergence_count_label.configure(text=str(count)))
                 except json.JSONDecodeError:
-                    self.log(f"ERROR: Dato de vergence inválido o truncado (tamaño: {len(data)} bytes): {data[:50].decode('utf-8', errors='ignore')}...", nivel="ERROR")
+                    self.log(f"Dato de vergence inválido o truncado (tamaño: {len(data)} bytes): {data[:50].decode('utf-8', errors='ignore')}...", level="ERROR")
                     continue
                 except UnicodeDecodeError:
-                    self.log(f"ERROR: Error decodificando datos de vergence (tamaño: {len(data)} bytes): datos no válidos", nivel="ERROR")
+                    self.log(f"Error decodificando datos de vergence (tamaño: {len(data)} bytes): datos no válidos", level="ERROR")
                     continue
             except socket.timeout:
                 continue
             except socket.error as e:
-                if not self.detener_vergence.is_set():
-                    self.log(f"ERROR: Error recibiendo datos de vergence: {str(e)}", nivel="ERROR")
+                if not self.stop_vergence.is_set():
+                    self.log(f"Error recibiendo datos de vergence: {str(e)}", level="ERROR")
                     break
-        if self.sock_vergence:
+        if self.vergence_sock:
             try:
-                self.sock_vergence.close()
+                self.vergence_sock.close()
             except:
                 pass
-            self.sock_vergence = None
+            self.vergence_sock = None
             
-    def guardar_datos_vergence(self):
-        if self.partida_actual and self.vergence_data:
-            os.makedirs(self.carpeta_vergence_var.get(), exist_ok=True)
-            ruta_jsonl = os.path.join(self.carpeta_vergence_var.get(), f"{self.partida_actual}_vergence.jsonl")
+    def save_vergence_data(self):
+        if self.current_game and self.vergence_data:
+            os.makedirs(self.vergence_folder_var.get(), exist_ok=True)
+            jsonl_path = os.path.join(self.vergence_folder_var.get(), f"{self.current_game}_vergence.jsonl")
             
             try:
-                with open(ruta_jsonl, "w", encoding="utf-8") as f:
-                    for linea in self.vergence_data:
+                with open(jsonl_path, "w", encoding="utf-8") as f:
+                    for line in self.vergence_data:
                         try:
-                            obj = json.loads(linea)
+                            obj = json.loads(line)
                             f.write(json.dumps(obj) + "\n")
                         except json.JSONDecodeError:
-                            self.log(f"ERROR: Línea JSON de vergence inválida ignorada: {linea[:50]}...", nivel="ERROR")
-                self.log(f"INFO: Datos de vergence guardados en: {ruta_jsonl}")
+                            self.log(f"Línea JSON de vergence inválida ignorada: {line[:50]}...", level="ERROR")
+                self.log(f"Datos de vergence guardados en: {jsonl_path}")
             except Exception as e:
-                self.log(f"ERROR: Error al guardar datos de vergence: {str(e)}", nivel="ERROR")
+                self.log(f"Error al guardar datos de vergence: {str(e)}", level="ERROR")
                 
-    def comenzar_partida(self):
-        def proceso_completo():
+    def start_game(self):
+        def full_process():
             try:
-                self.log("INFO: Iniciando nueva partida...")
-                self.root.after(0, lambda: self.actualizar_estado("Iniciando navegador..."))
+                if self.videos_folder_var.get() == "Elige la carpeta" or self.data_folder_var.get() == "Elige la carpeta":
+                    self.root.after(0, lambda: messagebox.showerror("Error", "Selecciona las carpetas de videos y datos"))
+                    return
+                    
+                self.log("Iniciando nueva partida...")
+                self.root.after(0, lambda: self.update_status("Iniciando navegador..."))
                 self.root.after(0, lambda: self.progress_bar.start())
                 
                 if not os.path.exists(self.driver_path_var.get()):
@@ -941,145 +984,145 @@ class GrabadorPartidas:
                 )
                 connect_button.click()
                 
-                self.root.after(0, lambda: self.actualizar_estado("Preparando grabación..."))
-                self.sock_video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.sock_video.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.sock_video.bind(("0.0.0.0", 5005))
+                self.root.after(0, lambda: self.update_status("Preparando grabación..."))
+                self.video_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.video_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.video_sock.bind(("0.0.0.0", 5005))
                 
-                self.detener_udp.clear()
-                self.hilo_udp = threading.Thread(target=self.escuchar_udp, daemon=True)
-                self.hilo_udp.start()
+                self.stop_udp.clear()
+                self.udp_thread = threading.Thread(target=self.listen_udp, daemon=True)
+                self.udp_thread.start()
                 
-                self.root.after(0, lambda: self.btn_comenzar.configure(state="disabled"))
-                self.root.after(0, lambda: self.btn_detener_forzado.configure(state="normal"))
-                self.root.after(0, lambda: self.actualizar_estado("Esperando señal de inicio..."))
+                self.root.after(0, lambda: self.btn_start.configure(state="disabled"))
+                self.root.after(0, lambda: self.btn_force_stop.configure(state="normal"))
+                self.root.after(0, lambda: self.update_status("Esperando señal de inicio..."))
                 
-                self.esperando_grabacion = True
+                self.waiting_for_recording = True
                 
             except Exception as e:
-                self.log(f"ERROR: Error al iniciar partida: {str(e)}", nivel="ERROR")
+                self.log(f"Error al iniciar partida: {str(e)}", level="ERROR")
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Error al iniciar partida:\n{str(e)}"))
-                self.root.after(0, lambda: self.actualizar_estado("Error al iniciar"))
+                self.root.after(0, lambda: self.update_status("Error al iniciar"))
                 self.root.after(0, lambda: self.progress_bar.stop())
             finally:
-                if self.sock_video is None and self.driver is None and self.hilo_udp is None:
-                    self.limpiar_recursos()
+                if self.video_sock is None and self.driver is None and self.udp_thread is None:
+                    self.cleanup_resources()
                 
-        threading.Thread(target=proceso_completo, daemon=True).start()
+        threading.Thread(target=full_process, daemon=True).start()
         
-    def escuchar_udp(self):
+    def listen_udp(self):
         try:
-            while not self.detener_udp.is_set():
-                self.sock_video.settimeout(1.0)
+            while not self.stop_udp.is_set():
+                self.video_sock.settimeout(1.0)
                 try:
-                    data, addr = self.sock_video.recvfrom(1024)
-                    mensaje = data.decode().strip().lower()
+                    data, addr = self.video_sock.recvfrom(1024)
+                    message = data.decode().strip().lower()
                     
-                    if mensaje == "state:start" and self.esperando_grabacion:
-                        self.root.after(0, self.iniciar_grabacion)
-                    elif mensaje == "state:end" and self.grabando:
-                        self.root.after(0, self.finalizar_y_cerrar)
+                    if message == "state:start" and self.waiting_for_recording:
+                        self.root.after(0, self.start_recording)
+                    elif message == "state:end" and self.recording:
+                        self.root.after(0, self.finalize_and_close)
                         
                 except socket.timeout:
                     continue
                     
         except Exception as e:
-            if not self.detener_udp.is_set():
-                self.log(f"ERROR: Error en escucha UDP: {str(e)}", nivel="ERROR")
+            if not self.stop_udp.is_set():
+                self.log(f"Error en escucha UDP: {str(e)}", level="ERROR")
         finally:
-            if self.sock_video:
-                self.sock_video.close()
-                self.sock_video = None
+            if self.video_sock:
+                self.video_sock.close()
+                self.video_sock = None
                 
-    def iniciar_grabacion(self):
-        self.partida_actual = self.generar_nuevo_nombre()
-        self.log(f"INFO: Iniciando grabación de partida: {self.partida_actual}")
+    def start_recording(self):
+        self.current_game = self.generate_new_name()
+        self.log(f"Iniciando grabación de partida: {self.current_game}")
         
-        self.actualizar_estado(f"Grabando {self.partida_actual}...")
-        self.partida_label.configure(text=f"Partida: {self.partida_actual}")
+        self.update_status(f"Grabando {self.current_game}...")
+        self.game_label.configure(text=f"Partida: {self.current_game}")
         
         self.click_start_record_button()
         
-        self.detener_escucha.clear()
-        self.datos_partida.clear()
-        self.hilo_datos = threading.Thread(target=self.escuchar_datos, daemon=True)
-        self.hilo_datos.start()
+        self.stop_listening.clear()
+        self.game_data.clear()
+        self.data_thread = threading.Thread(target=self.listen_data, daemon=True)
+        self.data_thread.start()
         
-        self.esperando_grabacion = False
-        self.grabando = True
-        self.tiempo_inicio = time.time()
-        self.actualizar_contador_tiempo()
+        self.waiting_for_recording = False
+        self.recording = True
+        self.start_time = time.time()
+        self.update_time_counter()
         
-    def finalizar_y_cerrar(self):
-        if not self.grabando:
+    def finalize_and_close(self):
+        if not self.recording:
             return
             
-        self.log(f"INFO: Finalizando partida: {self.partida_actual}")
-        self.actualizar_estado("Finalizando partida...")
+        self.log(f"Finalizando partida: {self.current_game}")
+        self.update_status("Finalizando partida...")
         
         self.click_stop_record_button()
         
-        self.detener_escucha.set()
-        if self.hilo_datos and self.hilo_datos.is_alive():
-            self.hilo_datos.join(timeout=2)
+        self.stop_listening.set()
+        if self.data_thread and self.data_thread.is_alive():
+            self.data_thread.join(timeout=2)
             
-        self.guardar_datos()
-        self.guardar_datos_vergence()
+        self.save_data()
+        self.save_vergence_data()
         
-        self.cola_videos.put(self.partida_actual)
+        self.video_queue.put(self.current_game)
         
         if self.driver:
             self.driver.quit()
             self.driver = None
         
-        self.limpiar_recursos()
+        self.cleanup_resources()
         
-        self.actualizar_estado("Partida finalizada - Listo para nueva partida")
+        self.update_status("Partida finalizada - Listo para nueva partida")
         self.progress_bar.stop()
-        self.partida_label.configure(text="Sin partida activa")
-        self.datos_count_label.configure(text="0")
-        self.vergence_count_label.configure(text="Datos Vergence: 0")
-        self.tiempo_label.configure(text="00:00:00")
-        self.btn_comenzar.configure(state="normal")
-        self.btn_detener_forzado.configure(state="disabled")
+        self.game_label.configure(text="Sin partida activa")
+        self.data_count_label.configure(text="0")
+        self.vergence_count_label.configure(text="0")
+        self.time_label.configure(text="00:00:00")
+        self.btn_start.configure(state="normal")
+        self.btn_force_stop.configure(state="disabled")
         
-        self.grabando = False
-        self.esperando_grabacion = False
-        self.partida_actual = None
+        self.recording = False
+        self.waiting_for_recording = False
+        self.current_game = None
         
-    def detener_forzado(self):
-        self.log("INFO: Deteniendo partida forzadamente...")
-        self.actualizar_estado("Deteniendo forzosamente...")
+    def force_stop(self):
+        self.log("Deteniendo partida forzadamente...")
+        self.update_status("Deteniendo forzosamente...")
         
-        if self.grabando:
+        if self.recording:
             self.click_stop_record_button()
-            self.detener_escucha.set()
-            if self.hilo_datos and self.hilo_datos.is_alive():
-                self.hilo_datos.join(timeout=2)
-            self.guardar_datos()
-            self.guardar_datos_vergence()
-            if self.partida_actual:
-                self.cola_videos.put(self.partida_actual)
+            self.stop_listening.set()
+            if self.data_thread and self.data_thread.is_alive():
+                self.data_thread.join(timeout=2)
+            self.save_data()
+            self.save_vergence_data()
+            if self.current_game:
+                self.video_queue.put(self.current_game)
         
-        self.limpiar_recursos()
+        self.cleanup_resources()
         
-        self.actualizar_estado("Detenido - Listo para nueva partida")
+        self.update_status("Detenido - Listo para nueva partida")
         self.progress_bar.stop()
-        self.partida_label.configure(text="Sin partida activa")
-        self.datos_count_label.configure(text="0")
-        self.vergence_count_label.configure(text="Datos Vergence: 0")
-        self.tiempo_label.configure(text="00:00:00")
-        self.btn_comenzar.configure(state="normal")
-        self.btn_detener_forzado.configure(state="disabled")
+        self.game_label.configure(text="Sin partida activa")
+        self.data_count_label.configure(text="0")
+        self.vergence_count_label.configure(text="0")
+        self.time_label.configure(text="00:00:00")
+        self.btn_start.configure(state="normal")
+        self.btn_force_stop.configure(state="disabled")
         
-        self.esperando_grabacion = False
-        self.grabando = False
-        self.partida_actual = None
+        self.waiting_for_recording = False
+        self.recording = False
+        self.current_game = None
         
-    def limpiar_recursos(self):
-        self.detener_udp.set()
-        if self.hilo_udp and self.hilo_udp.is_alive():
-            self.hilo_udp.join(timeout=2)
+    def cleanup_resources(self):
+        self.stop_udp.set()
+        if self.udp_thread and self.udp_thread.is_alive():
+            self.udp_thread.join(timeout=2)
             
         if self.driver:
             try:
@@ -1088,39 +1131,39 @@ class GrabadorPartidas:
                 pass
             self.driver = None
             
-        if self.sock_video:
+        if self.video_sock:
             try:
-                self.sock_video.close()
+                self.video_sock.close()
             except:
                 pass
-            self.sock_video = None
+            self.video_sock = None
             
         self.stop_vergence_listening()
             
-    def actualizar_contador_tiempo(self):
-        if self.grabando:
-            tiempo_transcurrido = int(time.time() - self.tiempo_inicio)
-            horas = tiempo_transcurrido // 3600
-            minutos = (tiempo_transcurrido % 3600) // 60
-            segundos = tiempo_transcurrido % 60
-            tiempo_str = f"{horas:02d}:{minutos:02d}:{segundos:02d}"
-            self.tiempo_label.configure(text=tiempo_str)
-            self.root.after(1000, self.actualizar_contador_tiempo)
+    def update_time_counter(self):
+        if self.recording:
+            elapsed_time = int(time.time() - self.start_time)
+            hours = elapsed_time // 3600
+            minutes = (elapsed_time % 3600) // 60
+            seconds = elapsed_time % 60
+            time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            self.time_label.configure(text=time_str)
+            self.root.after(1000, self.update_time_counter)
             
-    def actualizar_estado(self, estado):
-        self.status_label.configure(text=estado)
+    def update_status(self, status):
+        self.status_label.configure(text=status)
         
     def click_start_record_button(self):
         try:
-            botones = WebDriverWait(self.driver, 15).until(
+            buttons = WebDriverWait(self.driver, 15).until(
                 lambda d: d.find_elements(By.CSS_SELECTOR, "button.css-1ohi2ce")
             )
-            if len(botones) >= 3:
-                self.driver.execute_script("arguments[0].click();", botones[2])
+            if len(buttons) >= 3:
+                self.driver.execute_script("arguments[0].click();", buttons[2])
             else:
-                self.log("ERROR: No se encontraron suficientes botones para iniciar la grabación", nivel="ERROR")
+                self.log("No se encontraron suficientes botones para iniciar la grabación", level="ERROR")
         except Exception as e:
-            self.log(f"ERROR: Error al iniciar grabación: {str(e)}", nivel="ERROR")
+            self.log(f"Error al iniciar grabación: {str(e)}", level="ERROR")
             
     def click_stop_record_button(self):
         try:
@@ -1129,124 +1172,129 @@ class GrabadorPartidas:
             )
             self.driver.execute_script("arguments[0].click();", stop_button)
         except Exception as e:
-            self.log(f"ERROR: Error al detener grabación: {str(e)}", nivel="ERROR")
+            self.log(f"Error al detener grabación: {str(e)}", level="ERROR")
             
-    def escuchar_datos(self):
-        sock_datos = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock_datos.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock_datos.bind(("0.0.0.0", 5006))
-        sock_datos.settimeout(1.0)
+    def listen_data(self):
+        data_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        data_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        data_sock.bind(("0.0.0.0", 5006))
+        data_sock.settimeout(1.0)
         
-        while not self.detener_escucha.is_set():
+        while not self.stop_listening.is_set():
             try:
-                data, addr = sock_datos.recvfrom(4096)
-                mensaje = data.decode().strip()
-                self.datos_partida.append(mensaje)
+                data, addr = data_sock.recvfrom(4096)
+                message = data.decode().strip()
+                self.game_data.append(message)
                 
-                count = len(self.datos_partida)
-                self.root.after(0, lambda: self.datos_count_label.configure(text=str(count)))
+                count = len(self.game_data)
+                self.root.after(0, lambda: self.data_count_label.configure(text=str(count)))
                 
             except socket.timeout:
                 continue
             except Exception as e:
-                self.log(f"ERROR: Error recibiendo datos: {str(e)}", nivel="ERROR")
+                self.log(f"Error recibiendo datos: {str(e)}", level="ERROR")
                 break
                 
-        sock_datos.close()
+        data_sock.close()
         
-    def guardar_datos(self):
-        if self.partida_actual and self.datos_partida:
-            os.makedirs(self.carpeta_datos_var.get(), exist_ok=True)
-            ruta_jsonl = os.path.join(self.carpeta_datos_var.get(), f"{self.partida_actual}.jsonl")
+    def save_data(self):
+        if self.current_game and self.game_data:
+            os.makedirs(self.data_folder_var.get(), exist_ok=True)
+            jsonl_path = os.path.join(self.data_folder_var.get(), f"{self.current_game}.jsonl")
             
             try:
-                with open(ruta_jsonl, "w", encoding="utf-8") as f:
-                    for linea in self.datos_partida:
+                with open(jsonl_path, "w", encoding="utf-8") as f:
+                    for line in self.game_data:
                         try:
-                            obj = json.loads(linea)
+                            obj = json.loads(line)
                             f.write(json.dumps(obj) + "\n")
                         except json.JSONDecodeError:
-                            self.log(f"ERROR: Línea JSON inválida ignorada: {linea[:50]}...", nivel="ERROR")
+                            self.log(f"Línea JSON inválida ignorada: {line[:50]}...", level="ERROR")
             except Exception as e:
-                self.log(f"ERROR: Error al guardar datos: {str(e)}", nivel="ERROR")
+                self.log(f"Error al guardar datos: {str(e)}", level="ERROR")
                 
-    def generar_nuevo_nombre(self):
-        carpeta_videos = self.carpeta_videos_var.get()
-        carpeta_datos = self.carpeta_datos_var.get()
-        carpeta_vergence = self.carpeta_vergence_var.get()
-        os.makedirs(carpeta_videos, exist_ok=True)
-        os.makedirs(carpeta_datos, exist_ok=True)
-        os.makedirs(carpeta_vergence, exist_ok=True)
+    def generate_new_name(self):
+        videos_folder = self.videos_folder_var.get()
+        data_folder = self.data_folder_var.get()
+        vergence_folder = self.vergence_folder_var.get()
+        os.makedirs(videos_folder, exist_ok=True)
+        os.makedirs(data_folder, exist_ok=True)
+        os.makedirs(vergence_folder, exist_ok=True)
         i = 1
         while True:
-            nombre = f"Partida_{i:03d}"
-            video_path = os.path.join(carpeta_videos, nombre + ".mp4")
-            datos_path = os.path.join(carpeta_datos, nombre + ".jsonl")
-            vergence_path = os.path.join(carpeta_vergence, nombre + "_vergence.jsonl")
-            if not os.path.exists(video_path) and not os.path.exists(datos_path) and not os.path.exists(vergence_path):
-                return nombre
+            name = f"Partida_{i:03d}"
+            video_path = os.path.join(videos_folder, name + ".mp4")
+            data_path = os.path.join(data_folder, name + ".jsonl")
+            vergence_path = os.path.join(vergence_folder, name + "_vergence.jsonl")
+            if not os.path.exists(video_path) and not os.path.exists(data_path) and not os.path.exists(vergence_path):
+                return name
             i += 1
             
-    def iniciar_procesador_videos(self):
-        def proceso_cola():
+    def start_video_processor(self):
+        def queue_process():
             while True:
-                nombre_partida = self.cola_videos.get()
-                self.log(f"INFO: Procesando video: {nombre_partida}")
+                game_name = self.video_queue.get()
+                self.log(f"Procesando video: {game_name}")
                 
                 time.sleep(2)
                 
-                descargas = self.carpeta_descargas_var.get()
-                carpeta_destino = self.carpeta_videos_var.get()
-                os.makedirs(carpeta_destino, exist_ok=True)
+                downloads = self.downloads_folder_var.get()
+                destination_folder = self.videos_folder_var.get()
+                if downloads == "Elige la carpeta" or destination_folder == "Elige la carpeta":
+                    self.log("Carpetas de descargas o videos no configuradas", level="ERROR")
+                    self.video_queue.task_done()
+                    continue
                 
-                archivos = [
-                    f for f in os.listdir(descargas)
+                os.makedirs(destination_folder, exist_ok=True)
+                
+                files = [
+                    f for f in os.listdir(downloads)
                     if f.endswith(".webm") and re.match(r"\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}", f)
                 ]
                 
-                if archivos:
-                    archivos.sort(key=lambda x: os.path.getctime(os.path.join(descargas, x)), reverse=True)
-                    archivo_original = archivos[0]
+                if files:
+                    files.sort(key=lambda x: os.path.getctime(os.path.join(downloads, x)), reverse=True)
+                    original_file = files[0]
                     
-                    ruta_origen = os.path.join(descargas, archivo_original)
-                    ruta_destino_webm = os.path.join(carpeta_destino, nombre_partida + ".webm")
-                    ruta_destino_mp4 = os.path.join(carpeta_destino, nombre_partida + ".mp4")
+                    source_path = os.path.join(downloads, original_file)
+                    destination_webm = os.path.join(destination_folder, game_name + ".webm")
+                    destination_mp4 = os.path.join(destination_folder, game_name + ".mp4")
                     
                     try:
-                        shutil.move(ruta_origen, ruta_destino_webm)
+                        shutil.move(source_path, destination_webm)
                         
-                        comando = [
-                            "ffmpeg", "-i", ruta_destino_webm,
+                        command = [
+                            "ffmpeg", "-i", destination_webm,
                             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                            ruta_destino_mp4
+                            destination_mp4
                         ]
-                        subprocess.run(comando, check=True)
-                        self.log(f"INFO: Video convertido: {nombre_partida}.mp4")
+                        subprocess.run(command, check=True)
+                        self.log(f"Video convertido: {game_name}.mp4")
                         
-                        os.remove(ruta_destino_webm)
+                        os.remove(destination_webm)
                         
                     except Exception as e:
-                        self.log(f"ERROR: Error procesando video: {str(e)}", nivel="ERROR")
+                        self.log(f"Error procesando video: {str(e)}", level="ERROR")
                 else:
-                    self.log("ERROR: No se encontró archivo .webm para procesar", nivel="ERROR")
+                    self.log("No se encontró archivo .webm para procesar", level="ERROR")
                     
-                self.cola_videos.task_done()
+                self.video_queue.task_done()
                 
-        threading.Thread(target=proceso_cola, daemon=True).start()
+        threading.Thread(target=queue_process, daemon=True).start()
         
-    def guardar_configuracion(self):
+    def save_settings(self):
         self.root.after(0, lambda: messagebox.showinfo("Configuración", "Configuración guardada exitosamente"))
         
     def on_closing(self):
         if messagebox.askokcancel("Salir", "¿Estás seguro que quieres salir?"):
-            self.limpiar_recursos()
+            self.cleanup_resources()
             self.root.destroy()
 
 def main():
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
     root = ctk.CTk()
-    app = GrabadorPartidas(root)
+    app = GameRecorder(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
 
