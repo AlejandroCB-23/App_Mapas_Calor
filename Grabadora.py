@@ -524,7 +524,7 @@ class GameRecorder:
         ctk.CTkButton(
             driver_frame,
             text="Seleccionar",
-            command=lambda: self.select_file(self.driver_path_var),
+            command=lambda: self.select_file(self.driver_path_var, self.driver_path_var, ".exe"),
             fg_color="#0288d1",
             hover_color="#0277bd",
             font=("Helvetica", 16, "bold"),
@@ -793,12 +793,24 @@ class GameRecorder:
             variable.set(folder)
             
     def select_file(self, variable, default_dir=None, extension=None):
-        initial_dir = default_dir.get() if default_dir.get() != "Elige la carpeta" else ""
+        initial_dir = ""
+        if default_dir:
+            current_path = default_dir.get() if isinstance(default_dir, ctk.StringVar) else default_dir
+            if current_path and current_path != "Elige la carpeta" and os.path.exists(os.path.dirname(current_path)):
+                initial_dir = os.path.dirname(current_path)
+            elif current_path == "Elige la carpeta":
+                initial_dir = ""
+        
+        filetypes = [(f"Archivos {extension}", f"*{extension}"), ("Todos los archivos", "*.*")] if extension else [("Todos los archivos", "*.*")]
+        
         file = filedialog.askopenfilename(
             initialdir=initial_dir,
-            filetypes=[(f"Archivos {extension}", f"*{extension}"), ("Todos los archivos", "*.*")] if extension else [("Todos los archivos", "*.*")]
+            filetypes=filetypes
         )
         if file:
+            if extension == ".exe" and not file.lower().endswith(".exe"):
+                self.root.after(0, lambda: messagebox.showerror("Error", "Por favor, selecciona un archivo ejecutable (.exe)"))
+                return
             variable.set(file)
     
     def log(self, message, level="INFO"):
@@ -874,7 +886,7 @@ class GameRecorder:
                 
             self.vergence_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.vergence_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.vergence_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)  # Increased to 256 KB
+            self.vergence_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
             self.vergence_sock.bind(("0.0.0.0", 5007))
             self.vergence_sock.settimeout(1.0)
             
@@ -911,10 +923,9 @@ class GameRecorder:
     def listen_vergence(self):
         while not self.stop_vergence.is_set():
             try:
-                data, addr = self.vergence_sock.recvfrom(262144)  # Increased to 256 KB
+                data, addr = self.vergence_sock.recvfrom(262144) 
                 try:
                     message = data.decode('utf-8').strip()
-                    # Validate that the message is valid JSON
                     json.loads(message)
                     self.vergence_data.append(message)
                     
