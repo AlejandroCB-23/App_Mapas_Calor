@@ -916,14 +916,13 @@ class GameRecorder:
         self.listening_vergence = False
         self.btn_toggle_vergence.configure(text="Datos Vergencia", fg_color="#0288d1", hover_color="#01579b")
         self.vergence_status_label.configure(text="Apagada")
+        self.vergence_count_label.configure(text="0")
         self.log("Escucha de datos de vergence detenida")
-        if self.vergence_data and self.current_game:
-            self.save_vergence_data()
             
     def listen_vergence(self):
         while not self.stop_vergence.is_set():
             try:
-                data, addr = self.vergence_sock.recvfrom(262144) 
+                data, addr = self.vergence_sock.recvfrom(262144)
                 try:
                     message = data.decode('utf-8').strip()
                     json.loads(message)
@@ -1015,9 +1014,7 @@ class GameRecorder:
                 self.root.after(0, lambda: messagebox.showerror("Error", f"Error al iniciar partida:\n{str(e)}"))
                 self.root.after(0, lambda: self.update_status("Error al iniciar"))
                 self.root.after(0, lambda: self.progress_bar.stop())
-            finally:
-                if self.video_sock is None and self.driver is None and self.udp_thread is None:
-                    self.cleanup_resources()
+                self.cleanup_resources()
                 
         threading.Thread(target=full_process, daemon=True).start()
         
@@ -1082,10 +1079,6 @@ class GameRecorder:
         
         self.video_queue.put(self.current_game)
         
-        if self.driver:
-            self.driver.quit()
-            self.driver = None
-        
         self.cleanup_resources()
         
         self.update_status("Partida finalizada - Listo para nueva partida")
@@ -1103,29 +1096,60 @@ class GameRecorder:
         
     def force_stop(self):
         self.log("Deteniendo partida forzadamente...")
-        self.update_status("Deteniendo forzosamente...")
-        
+        self.root.after(0, lambda: self.update_status("Deteniendo forzosamente..."))
+
         if self.recording:
-            self.click_stop_record_button()
-            self.stop_listening.set()
-            if self.data_thread and self.data_thread.is_alive():
-                self.data_thread.join(timeout=2)
-            self.save_data()
-            self.save_vergence_data()
-            if self.current_game:
-                self.video_queue.put(self.current_game)
-        
+            try:
+                self.click_stop_record_button()
+            except Exception as e:
+                self.log(f"Error al intentar detener la grabación: {str(e)}", level="ERROR")
+
+        self.stop_listening.set()
+        if self.data_thread and self.data_thread.is_alive():
+            self.log("Esperando a que termine el hilo de datos...")
+            self.data_thread.join(timeout=2)
+            if self.data_thread.is_alive():
+                self.log("El hilo de datos no terminó en el tiempo esperado", level="WARNING")
+
+        self.stop_vergence_listening()
+
+        self.log(f"Longitud de game_data antes de limpiar: {len(self.game_data)}")
+        self.game_data.clear()
+        self.log(f"Longitud de game_data después de limpiar: {len(self.game_data)}")
+        self.vergence_data.clear()
+
         self.cleanup_resources()
-        
-        self.update_status("Detenido - Listo para nueva partida")
-        self.progress_bar.stop()
-        self.game_label.configure(text="Sin partida activa")
-        self.data_count_label.configure(text="0")
-        self.vergence_count_label.configure(text="0")
-        self.time_label.configure(text="00:00:00")
-        self.btn_start.configure(state="normal")
-        self.btn_force_stop.configure(state="disabled")
-        
+
+        downloads = self.downloads_folder_var.get()
+        if downloads != "Elige la carpeta":
+            files = [
+                f for f in os.listdir(downloads)
+                if f.endswith(".webm") and re.match(r"\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2}", f)
+            ]
+            for file in files:
+                try:
+                    os.remove(os.path.join(downloads, file))
+                    self.log(f"Archivo eliminado: {file}")
+                except Exception as e:
+                    self.log(f"Error al eliminar archivo {file}: {str(e)}", level="ERROR")
+
+        def update_ui():
+            self.log("Actualizando UI...")
+            self.update_status("Detenido - Listo para nueva partida")
+            self.progress_bar.stop()
+            self.game_label.configure(text="Sin partida activa")
+            self.log(f"Configurando data_count_label a 0 (game_data len: {len(self.game_data)})")
+            self.data_count_label.configure(text="0")
+            self.vergence_count_label.configure(text="0")
+            self.vergence_status_label.configure(text="Apagada")
+            self.time_label.configure(text="00:00:00")
+            self.btn_start.configure(state="normal")
+            self.btn_force_stop.configure(state="disabled")
+            self.btn_toggle_vergence.configure(text="Datos Vergencia", fg_color="#0288d1", hover_color="#01579b")
+            self.root.update_idletasks()
+
+        self.root.after(0, update_ui)
+
         self.waiting_for_recording = False
         self.recording = False
         self.current_game = None
@@ -1207,6 +1231,7 @@ class GameRecorder:
                 break
                 
         data_sock.close()
+        self.log("Hilo de escucha de datos detenido")
         
     def save_data(self):
         if self.current_game and self.game_data:
