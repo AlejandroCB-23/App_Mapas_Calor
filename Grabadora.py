@@ -24,7 +24,7 @@ class GameRecorder:
         self.root.title("Grabador de Partidas - Mapa de Calor")
         self.root.geometry("1000x750")
         
-        self.url_var = ctk.StringVar(value="http://192.168.1.20:8080/cast")
+        self.url_var = ctk.StringVar(value="http://192.168.0.00:8080/cast")
         self.videos_folder_var = ctk.StringVar(value="Elige la carpeta")
         self.data_folder_var = ctk.StringVar(value="Elige la carpeta")
         self.vergence_folder_var = ctk.StringVar(value="Elige la carpeta")
